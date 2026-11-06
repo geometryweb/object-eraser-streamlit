@@ -1446,7 +1446,7 @@ function initWorkspace(parentElement) {
       statusMetricEl.style.color = "#d97706";
       statusMetricEl.style.background = "#fef3c7";
       statusMetricEl.style.borderColor = "#fcd34d";
-      statusMetricEl.innerHTML = "⚠️ 지울 영역을 브러시로 칠해주세요.";
+      statusMetricEl.innerHTML = "⚠️ 수정할 영역을 브러시로 칠해주세요.";
       return;
     }
     if (!st.setStateValue) return;
