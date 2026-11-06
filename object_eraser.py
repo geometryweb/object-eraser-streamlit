@@ -399,7 +399,7 @@ def run_inpaint_pipeline(orig_b64: str, mask_b64: str):
     mask_binary_small = (mask_layer > 10).astype(np.uint8) * 255
 
     if np.sum(mask_binary_small) == 0:
-        return None, 0.0, orig_w, orig_h, "⚠️ 지울 영역을 브러시로 칠해주세요."
+        return None, 0.0, orig_w, orig_h, "⚠️ 수정할 영역을 브러시로 칠해주세요."
 
     mask_binary_data = cv2.resize(
         mask_binary_small, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST
@@ -464,7 +464,7 @@ st.html(
 <style>
 .stApp {
     background-color: #f8fafc !important;
-    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif !important;
 }
 .block-container {
     max-width: 1360px !important;
@@ -862,9 +862,18 @@ WORKSPACE_CSS = """
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 10px;
+  padding-bottom: 8px;
   border-bottom: 1px solid #e2e8f0;
   margin-bottom: 10px;
+  min-height: 38px;
+  height: 38px;
+  box-sizing: border-box;
+}
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
 }
 .card-title-group {
   display: flex;
@@ -901,14 +910,24 @@ WORKSPACE_CSS = """
   color: #0f172a;
 }
 .result-time-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 140px;
+  width: auto;
+  white-space: nowrap;
+  text-align: center;
   font-size: 0.78rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
   color: #0284c7;
   font-weight: 700;
   background: #e0f2fe;
   border: 1px solid #bae6fd;
-  padding: 3px 9px;
+  padding: 3px 12px;
   border-radius: 18px;
+  line-height: 1.2;
+  box-sizing: border-box;
 }
 
 /* 이전 480px에서 딱 60px만 줄인 420px 황금 비율 뷰포트 */
@@ -1074,11 +1093,6 @@ WORKSPACE_CSS = """
 }
 .result-preview-img {
   margin: auto;
-  max-height: 420px;
-  max-width: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
   border-radius: 8px;
   display: block;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
@@ -1420,33 +1434,40 @@ function initWorkspace(parentElement) {
   // 실행 버튼: 원본 이미지 + 마스크를 단일 WebSocket 메시지로 파이썬 서버에 전달
   runBtn.addEventListener("click", () => {
     if (!st.origDataUrl) {
+      statusMetricEl.style.display = "inline-flex";
       statusMetricEl.style.color = "#ef4444";
+      statusMetricEl.style.background = "#fee2e2";
+      statusMetricEl.style.borderColor = "#fca5a5";
       statusMetricEl.innerHTML = "⚠️ 먼저 원본 이미지를 업로드해주세요.";
-      statusSubtextEl.textContent = "상단의 [Browse files] 버튼을 눌러 이미지를 먼저 선택하세요.";
       return;
     }
     if (!st.hasMask) {
-      statusMetricEl.style.color = "#f59e0b";
+      statusMetricEl.style.display = "inline-flex";
+      statusMetricEl.style.color = "#d97706";
+      statusMetricEl.style.background = "#fef3c7";
+      statusMetricEl.style.borderColor = "#fcd34d";
       statusMetricEl.innerHTML = "⚠️ 지울 영역을 브러시로 칠해주세요.";
-      statusSubtextEl.textContent = "편집창 위에서 마우스로 지울 부분을 빨간색으로 칠하세요.";
       return;
     }
     if (!st.setStateValue) return;
 
     stopTimer();
     const startTs = Date.now();
+    statusMetricEl.style.display = "inline-flex";
     statusMetricEl.style.color = "#0284c7";
-    statusMetricEl.innerHTML = `⏳ AI 신경망 복원 연산 중... <b id="wm-live-timer" class="stopwatch-pill">00분 00초</b>`;
-    statusSubtextEl.textContent = "AI 신경망이 선택 영역을 정밀 복원 중입니다. 잠시만 기다려주세요.";
+    statusMetricEl.style.background = "#e0f2fe";
+    statusMetricEl.style.borderColor = "#bae6fd";
+    statusMetricEl.innerHTML = `연산 중: <b id="wm-live-timer" style="margin-left:4px; font-weight:800; font-variant-numeric:tabular-nums;">00.00초</b>`;
 
     st.timerId = setInterval(() => {
       const el = q("#wm-live-timer");
       if (!el) return;
-      const sec = Math.floor((Date.now() - startTs) / 1000);
-      const m = String(Math.floor(sec / 60)).padStart(2, "0");
-      const s = String(sec % 60).padStart(2, "0");
-      el.textContent = `${m}분 ${s}초`;
-    }, 250);
+      const totalMs = Date.now() - startTs;
+      const totalSec = Math.floor(totalMs / 1000);
+      const s = String(totalSec).padStart(2, "0");
+      const cs = String(Math.floor((totalMs % 1000) / 10)).padStart(2, "0");
+      el.textContent = `${s}.${cs}초`;
+    }, 50);
 
     runBtn.disabled = true;
     const nextId = ++st.reqSeq;
@@ -1487,7 +1508,9 @@ function initWorkspace(parentElement) {
 
       if (data.error) {
         statusMetricEl.style.display = "inline-flex";
-        statusMetricEl.style.color = "#f59e0b";
+        statusMetricEl.style.color = "#ef4444";
+        statusMetricEl.style.background = "#fee2e2";
+        statusMetricEl.style.borderColor = "#fca5a5";
         statusMetricEl.textContent = data.error;
         return;
       }
@@ -1496,9 +1519,14 @@ function initWorkspace(parentElement) {
         resultEmptyEl.style.display = "none";
         resultImgEl.src = data.resImg;
         resultImgEl.style.display = "block";
+        resultImgEl.style.width = canvasWrapEl.style.width;
+        resultImgEl.style.height = canvasWrapEl.style.height;
         downloadBtn.disabled = false;
 
         statusMetricEl.style.display = "inline-flex";
+        statusMetricEl.style.color = "#0284c7";
+        statusMetricEl.style.background = "#e0f2fe";
+        statusMetricEl.style.borderColor = "#bae6fd";
         statusMetricEl.innerHTML = `추론 시간: <b style="color:#0284c7; margin-left:4px;">${data.elapsedText}</b>`;
       }
     }
@@ -1571,11 +1599,12 @@ if isinstance(job, dict) and job.get("id", 0) > st.session_state["last_processed
         res_b64, elapsed, w, h, err_msg = run_inpaint_pipeline(
             job.get("orig", ""), job.get("mask", "")
         )
-        m = int(elapsed // 60)
-        s = int(elapsed % 60)
-        formatted_time = (
-            f"{m:02d}분 {s:02d}초 ({elapsed:.2f}초)" if m > 0 else f"{elapsed:.2f}초"
-        )
+        s = int(elapsed)
+        cs = int(round((elapsed - s) * 100))
+        if cs >= 100:
+            s += 1
+            cs = 0
+        formatted_time = f"{s:02d}.{cs:02d}초"
         st.session_state["py_response"] = {
             "resId": job_id,
             "resImg": res_b64,
