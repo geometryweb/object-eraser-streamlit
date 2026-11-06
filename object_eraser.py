@@ -457,6 +457,100 @@ def run_inpaint_pipeline(orig_b64: str, mask_b64: str):
 
 
 # ==========================================
+# 2-1. 일일 사용량 제한 (1인당 하루 30회, 클라이언트 IP 및 세션 연동)
+# ==========================================
+DAILY_LIMIT = 30
+# 서버 프로세스 메모리에 저장되는 일일 사용량 캐시: { "IP": {"date": "YYYY-MM-DD", "count": N} }
+_IP_USAGE_CACHE = {}
+
+def get_client_ip() -> str:
+    """Streamlit 리버스 프록시 헤더 및 WebSocket 클라이언트로부터 실제 IP를 판별합니다."""
+    try:
+        from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
+        from streamlit import runtime
+        ctx = get_script_run_ctx()
+        if ctx:
+            client = runtime.get_instance().get_client(ctx.session_id)
+            if client and client.client_context:
+                cc = client.client_context
+                if getattr(cc, "remote_ip", None):
+                    return str(cc.remote_ip).strip()
+                headers = dict(cc.headers or [])
+                xfwd = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For")
+                if xfwd:
+                    return str(xfwd).split(",")[0].strip()
+                cf_ip = headers.get("cf-connecting-ip") or headers.get("CF-Connecting-IP")
+                if cf_ip:
+                    return str(cf_ip).strip()
+                xreal = headers.get("x-real-ip") or headers.get("X-Real-IP")
+                if xreal:
+                    return str(xreal).strip()
+    except Exception:
+        pass
+
+    try:
+        if hasattr(st, "context") and hasattr(st.context, "headers"):
+            headers = st.context.headers or {}
+            xfwd = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For")
+            if xfwd:
+                return str(xfwd).split(",")[0].strip()
+            cf_ip = headers.get("cf-connecting-ip") or headers.get("CF-Connecting-IP")
+            if cf_ip:
+                return str(cf_ip).strip()
+            xreal = headers.get("x-real-ip") or headers.get("X-Real-IP")
+            if xreal:
+                return str(xreal).strip()
+            if hasattr(st.context, "ip_address") and st.context.ip_address:
+                return str(st.context.ip_address).strip()
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+def check_and_increment_usage(client_ip: str) -> tuple[bool, int, int]:
+    """
+    접속자 IP 및 세션 기준으로 오늘 사용량을 검사하고 증가시킵니다.
+    반환: (허용여부: bool, 오늘사용횟수: int, 잔여횟수: int)
+    """
+    from datetime import date
+    today_str = date.today().isoformat()
+    
+    # 1. 서버 전역 IP 캐시 갱신
+    record = _IP_USAGE_CACHE.get(client_ip)
+    if not record or record.get("date") != today_str:
+        record = {"date": today_str, "count": 0}
+        _IP_USAGE_CACHE[client_ip] = record
+
+    # 2. 세션 상태에도 독립 카운터 동기화
+    sess_date = st.session_state.get("_sess_usage_date")
+    if sess_date != today_str:
+        st.session_state["_sess_usage_date"] = today_str
+        st.session_state["_sess_usage_count"] = 0
+
+    cur_count = max(record["count"], st.session_state.get("_sess_usage_count", 0))
+
+    if cur_count >= DAILY_LIMIT:
+        return False, cur_count, 0
+
+    cur_count += 1
+    record["count"] = cur_count
+    st.session_state["_sess_usage_count"] = cur_count
+    rem = max(0, DAILY_LIMIT - cur_count)
+    return True, cur_count, rem
+
+def get_usage_info(client_ip: str) -> tuple[int, int]:
+    """현재 사용량 및 잔여 횟수를 조회합니다."""
+    from datetime import date
+    today_str = date.today().isoformat()
+    record = _IP_USAGE_CACHE.get(client_ip)
+    ip_count = record["count"] if (record and record.get("date") == today_str) else 0
+    sess_date = st.session_state.get("_sess_usage_date")
+    sess_count = st.session_state.get("_sess_usage_count", 0) if sess_date == today_str else 0
+    count = max(ip_count, sess_count)
+    rem = max(0, DAILY_LIMIT - count)
+    return count, rem
+
+
+# ==========================================
 # 3. 글로벌 레이아웃 CSS & 상단 헤더 (DESIGN_SYSTEM_PASTEL_SKY)
 # ==========================================
 st.html(
@@ -658,6 +752,7 @@ WORKSPACE_HTML = """
           <h2 class="card-title-text">복원 결과</h2>
         </div>
         <div class="card-header-actions">
+          <span id="wm-usage-metric" class="usage-limit-chip" style="display:inline-flex;">오늘 잔여: 30/30회</span>
           <span id="wm-status-metric" class="result-time-chip" style="display:none;"></span>
           <span id="wm-status-subtext" style="display:none;"></span>
         </div>
@@ -929,6 +1024,21 @@ WORKSPACE_CSS = """
   line-height: 1.2;
   box-sizing: border-box;
 }
+.usage-limit-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.76rem;
+  font-weight: 700;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #0284c7;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  padding: 3px 10px;
+  border-radius: 14px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
 
 /* 이전 480px에서 딱 60px만 줄인 420px 황금 비율 뷰포트 */
 .viewport-box {
@@ -1185,6 +1295,7 @@ function initWorkspace(parentElement) {
   const maskCanvas = q("#wm-mask-canvas");
   const resultEmptyEl = q("#wm-result-empty");
   const resultImgEl = q("#wm-result-img");
+  const usageMetricEl = q("#wm-usage-metric");
 
   const st = {
     origDataUrl: null,
@@ -1459,6 +1570,18 @@ function initWorkspace(parentElement) {
     statusMetricEl.style.borderColor = "#bae6fd";
     statusMetricEl.innerHTML = `연산 중: <b id="wm-live-timer" style="margin-left:4px; font-weight:800; font-variant-numeric:tabular-nums;">00.00초</b>`;
 
+    // 요청 시 즉시 낙관적(Optimistic) 잔여 횟수 1회 실시간 차감 표시
+    if (usageMetricEl) {
+      const curTxt = usageMetricEl.textContent || "";
+      const match = curTxt.match(/([0-9]+)\\/([0-9]+)/);
+      if (match) {
+        const curRem = parseInt(match[1], 10);
+        const limit = parseInt(match[2], 10);
+        const nextRem = Math.max(0, curRem - 1);
+        usageMetricEl.textContent = `오늘 잔여: ${nextRem}/${limit}회`;
+      }
+    }
+
     st.timerId = setInterval(() => {
       const el = q("#wm-live-timer");
       if (!el) return;
@@ -1501,6 +1624,25 @@ function initWorkspace(parentElement) {
       } else if (data && typeof data.termsAgreed !== "undefined") {
         st.termsAgreed = !!data.termsAgreed;
       }
+      if (data && data.usage && usageMetricEl) {
+        const rem = typeof data.usage.remaining !== "undefined" ? data.usage.remaining : 30;
+        const lim = data.usage.limit || 30;
+        usageMetricEl.textContent = `오늘 잔여: ${rem}/${lim}회`;
+        if (rem <= 0) {
+          usageMetricEl.style.color = "#dc2626";
+          usageMetricEl.style.background = "#fee2e2";
+          usageMetricEl.style.borderColor = "#fca5a5";
+        } else if (rem <= 5) {
+          usageMetricEl.style.color = "#d97706";
+          usageMetricEl.style.background = "#fef3c7";
+          usageMetricEl.style.borderColor = "#fcd34d";
+        } else {
+          usageMetricEl.style.color = "#0284c7";
+          usageMetricEl.style.background = "#f0f9ff";
+          usageMetricEl.style.borderColor = "#bae6fd";
+        }
+      }
+
       if (!data || !data.resId || data.resId === st.lastHandledId) return;
       st.lastHandledId = data.resId;
       stopTimer();
@@ -1549,7 +1691,7 @@ export default function(component) {
 @st.cache_resource(show_spinner=False)
 def _get_workspace_component():
     return st.components.v2.component(
-        "object_eraser_workspace",
+        "object_eraser_workspace_v2",
         html=WORKSPACE_HTML,
         css=WORKSPACE_CSS,
         js=WORKSPACE_JS,
@@ -1562,6 +1704,8 @@ def _get_workspace_component():
 # ==========================================
 if "last_processed_id" not in st.session_state:
     st.session_state["last_processed_id"] = 0
+init_client_ip = get_client_ip()
+init_used, init_rem = get_usage_info(init_client_ip)
 if "py_response" not in st.session_state:
     st.session_state["py_response"] = {
         "resId": 0,
@@ -1570,10 +1714,17 @@ if "py_response" not in st.session_state:
         "resDim": "",
         "error": None,
         "termsAgreed": st.session_state.get("terms_agreed", False),
+        "usage": {"used": init_used, "limit": DAILY_LIMIT, "remaining": init_rem},
     }
 
-# 파이썬 응답 데이터에 현재 동의 상태 동기화
+# 파이썬 응답 데이터에 현재 동의 상태 및 최신 잔여 사용량 동기화
 st.session_state["py_response"]["termsAgreed"] = st.session_state.get("terms_agreed", False)
+cur_used, cur_rem = get_usage_info(init_client_ip)
+st.session_state["py_response"]["usage"] = {
+    "used": cur_used,
+    "limit": DAILY_LIMIT,
+    "remaining": cur_rem,
+}
 
 workspace_comp = _get_workspace_component()
 comp_state = workspace_comp(
@@ -1595,29 +1746,43 @@ job = (comp_state or {}).get("job")
 if isinstance(job, dict) and job.get("id", 0) > st.session_state["last_processed_id"]:
     job_id = int(job["id"])
     st.session_state["last_processed_id"] = job_id
-    try:
-        res_b64, elapsed, w, h, err_msg = run_inpaint_pipeline(
-            job.get("orig", ""), job.get("mask", "")
-        )
-        s = int(elapsed)
-        cs = int(round((elapsed - s) * 100))
-        if cs >= 100:
-            s += 1
-            cs = 0
-        formatted_time = f"{s:02d}.{cs:02d}초"
-        st.session_state["py_response"] = {
-            "resId": job_id,
-            "resImg": res_b64,
-            "elapsedText": formatted_time,
-            "resDim": f"{w}x{h} px",
-            "error": err_msg,
-        }
-    except Exception as exc:
+    client_ip = get_client_ip()
+    allowed, used_cnt, rem_cnt = check_and_increment_usage(client_ip)
+    if not allowed:
         st.session_state["py_response"] = {
             "resId": job_id,
             "resImg": None,
             "elapsedText": "",
             "resDim": "",
-            "error": f"⚠️ 복원 중 오류가 발생했습니다: {exc}",
+            "error": f"⚠️ 오늘 사용량 한도(30회)를 모두 소진하셨습니다. 내일 다시 이용해주세요!",
+            "usage": {"used": used_cnt, "limit": DAILY_LIMIT, "remaining": 0},
         }
+    else:
+        try:
+            res_b64, elapsed, w, h, err_msg = run_inpaint_pipeline(
+                job.get("orig", ""), job.get("mask", "")
+            )
+            s = int(elapsed)
+            cs = int(round((elapsed - s) * 100))
+            if cs >= 100:
+                s += 1
+                cs = 0
+            formatted_time = f"{s:02d}.{cs:02d}초"
+            st.session_state["py_response"] = {
+                "resId": job_id,
+                "resImg": res_b64,
+                "elapsedText": formatted_time,
+                "resDim": f"{w}x{h} px",
+                "error": err_msg,
+                "usage": {"used": used_cnt, "limit": DAILY_LIMIT, "remaining": rem_cnt},
+            }
+        except Exception as exc:
+            st.session_state["py_response"] = {
+                "resId": job_id,
+                "resImg": None,
+                "elapsedText": "",
+                "resDim": "",
+                "error": f"⚠️ 복원 중 오류가 발생했습니다: {exc}",
+                "usage": {"used": used_cnt, "limit": DAILY_LIMIT, "remaining": rem_cnt},
+            }
     st.rerun()
