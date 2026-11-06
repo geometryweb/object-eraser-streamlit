@@ -22,6 +22,11 @@ cv2.setNumThreads(1)
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "resources" / "light_inpaint.onnx"
 
+# ==========================================
+# [설정] 1인당 하루 무료 사용량 한도 (상수 설정)
+# ==========================================
+DAILY_LIMIT = 2
+
 
 # ==========================================
 # 0. Streamlit 페이지 설정
@@ -457,9 +462,8 @@ def run_inpaint_pipeline(orig_b64: str, mask_b64: str):
 
 
 # ==========================================
-# 2-1. 일일 사용량 제한 (1인당 하루 30회, 클라이언트 IP 및 세션 연동)
+# 2-1. 일일 사용량 제한 (클라이언트 IP 및 세션 연동)
 # ==========================================
-DAILY_LIMIT = 30
 # 서버 프로세스 메모리에 저장되는 일일 사용량 캐시: { "IP": {"date": "YYYY-MM-DD", "count": N} }
 _IP_USAGE_CACHE = {}
 
@@ -752,7 +756,7 @@ WORKSPACE_HTML = """
           <h2 class="card-title-text">복원 결과</h2>
         </div>
         <div class="card-header-actions">
-          <span id="wm-usage-metric" class="usage-limit-chip" style="display:inline-flex;">오늘 잔여: 30/30회</span>
+          <span id="wm-usage-metric" class="usage-limit-chip" style="display:inline-flex;">오늘 잔여: __DAILY_LIMIT__/__DAILY_LIMIT__회</span>
           <span id="wm-status-metric" class="result-time-chip" style="display:none;"></span>
           <span id="wm-status-subtext" style="display:none;"></span>
         </div>
@@ -969,11 +973,15 @@ WORKSPACE_CSS = """
   align-items: center;
   gap: 8px;
   min-height: 28px;
+  max-width: calc(100% - 110px);
+  overflow: hidden;
 }
 .card-title-group {
   display: flex;
   align-items: center;
   gap: 7px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .card-title-icon {
   font-size: 1.05rem;
@@ -1012,14 +1020,14 @@ WORKSPACE_CSS = """
   width: auto;
   white-space: nowrap;
   text-align: center;
-  font-size: 0.78rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.76rem;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-variant-numeric: tabular-nums;
   color: #0284c7;
   font-weight: 700;
   background: #e0f2fe;
   border: 1px solid #bae6fd;
-  padding: 3px 12px;
+  padding: 3px 10px;
   border-radius: 18px;
   line-height: 1.2;
   box-sizing: border-box;
@@ -1625,21 +1633,24 @@ function initWorkspace(parentElement) {
         st.termsAgreed = !!data.termsAgreed;
       }
       if (data && data.usage && usageMetricEl) {
-        const rem = typeof data.usage.remaining !== "undefined" ? data.usage.remaining : 30;
-        const lim = data.usage.limit || 30;
-        usageMetricEl.textContent = `오늘 잔여: ${rem}/${lim}회`;
+        const lim = typeof data.usage.limit !== "undefined" ? data.usage.limit : __DAILY_LIMIT__;
+        const rem = typeof data.usage.remaining !== "undefined" ? data.usage.remaining : lim;
+        
+        // 잔여 한도를 모두 소진(0회)했을 때는 "오늘 잔여: 0/N회" 뱃지를 완전히 숨김
         if (rem <= 0) {
-          usageMetricEl.style.color = "#dc2626";
-          usageMetricEl.style.background = "#fee2e2";
-          usageMetricEl.style.borderColor = "#fca5a5";
-        } else if (rem <= 5) {
-          usageMetricEl.style.color = "#d97706";
-          usageMetricEl.style.background = "#fef3c7";
-          usageMetricEl.style.borderColor = "#fcd34d";
+          usageMetricEl.style.display = "none";
         } else {
-          usageMetricEl.style.color = "#0284c7";
-          usageMetricEl.style.background = "#f0f9ff";
-          usageMetricEl.style.borderColor = "#bae6fd";
+          usageMetricEl.style.display = "inline-flex";
+          usageMetricEl.textContent = `오늘 잔여: ${rem}/${lim}회`;
+          if (rem <= 5) {
+            usageMetricEl.style.color = "#d97706";
+            usageMetricEl.style.background = "#fef3c7";
+            usageMetricEl.style.borderColor = "#fcd34d";
+          } else {
+            usageMetricEl.style.color = "#0284c7";
+            usageMetricEl.style.background = "#f0f9ff";
+            usageMetricEl.style.borderColor = "#bae6fd";
+          }
         }
       }
 
@@ -1689,12 +1700,14 @@ export default function(component) {
 
 
 @st.cache_resource(show_spinner=False)
-def _get_workspace_component():
+def _get_workspace_component(daily_limit: int = DAILY_LIMIT):
+    final_html = WORKSPACE_HTML.replace("__DAILY_LIMIT__", str(daily_limit))
+    final_js = WORKSPACE_JS.replace("__DAILY_LIMIT__", str(daily_limit))
     return st.components.v2.component(
-        "object_eraser_workspace_v2",
-        html=WORKSPACE_HTML,
+        f"object_eraser_workspace_lim_{daily_limit}",
+        html=final_html,
         css=WORKSPACE_CSS,
-        js=WORKSPACE_JS,
+        js=final_js,
         isolate_styles=True,
     )
 
@@ -1754,7 +1767,7 @@ if isinstance(job, dict) and job.get("id", 0) > st.session_state["last_processed
             "resImg": None,
             "elapsedText": "",
             "resDim": "",
-            "error": f"⚠️ 오늘 사용량 한도(30회)를 모두 소진하셨습니다. 내일 다시 이용해주세요!",
+            "error": f"⚠️ 오늘 사용량 한도({DAILY_LIMIT}회)를 모두 소진하셨습니다. 내일 다시 이용해주세요!",
             "usage": {"used": used_cnt, "limit": DAILY_LIMIT, "remaining": 0},
         }
     else:
