@@ -1424,6 +1424,23 @@ function initWorkspace(parentElement) {
     termsOverlay.style.display = "flex";
   }
 
+  // 브라우저 localStorage에 저장된 오늘 일일 사용량 복원하여 새로고침 시에도 즉시 표시
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const storedUsageDate = localStorage.getItem("object_eraser_usage_date");
+  let localRemaining = __DAILY_LIMIT__;
+  if (storedUsageDate === todayKey) {
+    const storedCount = parseInt(localStorage.getItem("object_eraser_usage_count") || "0", 10);
+    localRemaining = Math.max(0, __DAILY_LIMIT__ - storedCount);
+  }
+  if (usageMetricEl) {
+    if (localRemaining <= 0) {
+      usageMetricEl.style.display = "none";
+    } else {
+      usageMetricEl.style.display = "inline-flex";
+      usageMetricEl.textContent = `오늘 잔여: ${localRemaining}/__DAILY_LIMIT__회`;
+    }
+  }
+
   // 동의하고 시작하기 클릭
   termsAgreeBtn.addEventListener("click", () => {
     st.termsAgreed = true;
@@ -1578,7 +1595,7 @@ function initWorkspace(parentElement) {
     statusMetricEl.style.borderColor = "#bae6fd";
     statusMetricEl.innerHTML = `연산 중: <b id="wm-live-timer" style="margin-left:4px; font-weight:800; font-variant-numeric:tabular-nums;">00.00초</b>`;
 
-    // 요청 시 즉시 낙관적(Optimistic) 잔여 횟수 1회 실시간 차감 표시
+    // 요청 시 즉시 낙관적(Optimistic) 잔여 횟수 1회 실시간 차감 표시 및 로컬스토리지 저장
     if (usageMetricEl) {
       const curTxt = usageMetricEl.textContent || "";
       const match = curTxt.match(/([0-9]+)\\/([0-9]+)/);
@@ -1586,6 +1603,9 @@ function initWorkspace(parentElement) {
         const curRem = parseInt(match[1], 10);
         const limit = parseInt(match[2], 10);
         const nextRem = Math.max(0, curRem - 1);
+        const used = limit - nextRem;
+        localStorage.setItem("object_eraser_usage_date", new Date().toISOString().slice(0, 10));
+        localStorage.setItem("object_eraser_usage_count", String(used));
         usageMetricEl.textContent = `오늘 잔여: ${nextRem}/${limit}회`;
       }
     }
@@ -1635,7 +1655,12 @@ function initWorkspace(parentElement) {
       if (data && data.usage && usageMetricEl) {
         const lim = typeof data.usage.limit !== "undefined" ? data.usage.limit : __DAILY_LIMIT__;
         const rem = typeof data.usage.remaining !== "undefined" ? data.usage.remaining : lim;
+        const used = typeof data.usage.used !== "undefined" ? data.usage.used : (__DAILY_LIMIT__ - rem);
         
+        // 서버에서 전달받은 최신 사용량을 브라우저 localStorage에 영구 저장 (새로고침 시에도 유지)
+        localStorage.setItem("object_eraser_usage_date", new Date().toISOString().slice(0, 10));
+        localStorage.setItem("object_eraser_usage_count", String(used));
+
         // 잔여 한도를 모두 소진(0회)했을 때는 "오늘 잔여: 0/N회" 뱃지를 완전히 숨김
         if (rem <= 0) {
           usageMetricEl.style.display = "none";
