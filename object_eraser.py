@@ -1287,7 +1287,7 @@ function initWorkspace(parentElement) {
         canvasWrapEl.style.display = "block";
 
         statusMetricEl.style.color = "#0369a1";
-        statusMetricEl.innerHTML = "이미지 로드 완료 · 지울 영역을 브러시로 칠해주세요.";
+        statusMetricEl.innerHTML = "이미지 로드 완료 · 수정할 영역을 브러시로 칠해주세요.";
         statusSubtextEl.textContent = "마우스로 불필요한 사물이나 얼룩을 빨간색으로 칠한 뒤 [🚀 객체 지우기]를 누르세요.";
       };
       img.src = ev.target.result;
@@ -1427,7 +1427,7 @@ function initWorkspace(parentElement) {
     if (st.origDataUrl) {
       statusMetricEl.style.display = "none";
       statusMetricEl.style.color = "#0369a1";
-      statusMetricEl.innerHTML = "마스크가 초기화되었습니다. 다시 지울 영역을 칠해주세요.";
+      statusMetricEl.innerHTML = "마스크가 초기화되었습니다. 수정할 영역을 다시 칠해주세요.";
     }
   });
 
