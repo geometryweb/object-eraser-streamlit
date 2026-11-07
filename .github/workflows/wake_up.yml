@@ -1,0 +1,46 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    # 매일 한국 시간(KST) 오전 9시에 실행 (UTC 기준 0시 0분)
+    - cron: '0 0 * * *'
+  # 언제든 수동으로 직접 실행해 볼 수 있도록 허용하는 옵션
+  workflow_dispatch:
+
+jobs:
+  wake-up:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Playwright
+        uses: microsoft/playwright-github-action@v1
+
+      - name: Visit and Wake Up Streamlit App
+        run: |
+          node -e '
+            const { chromium } = require("playwright");
+            (async () => {
+              const browser = await chromium.launch({ headless: true });
+              const page = await browser.newPage();
+              
+              // 1. 스트림릿 앱 주소로 접속 (최대 60초 대기)
+              await page.goto("https://object-eraser-app.streamlit.app", {
+                waitUntil: "networkidle",
+                timeout: 60000
+              });
+              
+              // 2. 혹시 앱이 이미 휴지기 상태일 경우 "Yes, get this app back up!" 버튼이 있는지 확인 후 클릭
+              const wakeButton = page.locator("button:has-text(\"Yes, get this app back up!\")");
+              if (await wakeButton.count() > 0) {
+                console.log("앱이 휴지기 상태여서 깨우기 버튼을 클릭합니다.");
+                await wakeButton.click();
+                // 앱이 다시 켜지고 로딩될 때까지 20초 대기
+                await page.waitForTimeout(20000);
+              } else {
+                console.log("앱이 이미 깨어 있습니다.");
+                // 웹소켓 연결 유지를 위해 10초간 머무름
+                await page.waitForTimeout(10000);
+              }
+              
+              await browser.close();
+            })();
+          '
