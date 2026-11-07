@@ -695,7 +695,28 @@ WORKSPACE_HTML = """
           <div class="rule-icon">🛡️</div>
           <div class="rule-content">
             <b>올바른 창작 윤리 준수</b><br>
-            <span>타인의 권리 표식을 무단 훼손하여 발생하는 책임은 사용자 본인에게 있으므로 건전한 이용을 부탁드립니다.</span>
+            <span>타인의 권리 표식을 무단 훼손하여 발생하는 민·형사상 법적 책임은 전적으로 사용자 본인에게 있습니다.</span>
+          </div>
+        </div>
+        <div class="terms-rule-item">
+          <div class="rule-icon">⚖️</div>
+          <div class="rule-content">
+            <b>기술적 면책 (무보증)</b><br>
+            <span>본 서비스는 기술적 편의를 제공할 뿐이며, 생성된 결과물의 적법성이나 상업적 이용 가능성에 대해 보증하지 않습니다.</span>
+          </div>
+        </div>
+        <div class="terms-rule-item">
+          <div class="rule-icon">🚫</div>
+          <div class="rule-content">
+            <b>권리 침해 신고 및 이용 제한</b><br>
+            <span>저작권 및 초상권 등 타인의 권리를 침해하는 용도로 사용이 확인되거나 신고가 접수될 경우, 사전 고지 없이 IP 차단 등 서비스 이용이 영구 제한될 수 있습니다.</span>
+          </div>
+        </div>
+        <div class="terms-rule-item terms-oss-credit">
+          <div class="rule-icon">📦</div>
+          <div class="rule-content">
+            <b>오픈소스 라이선스 안내</b><br>
+            <span>본 서비스는 Streamlit, ONNX Runtime, OpenCV, Pillow 등 오픈소스 소프트웨어를 기반으로 제작되었습니다.</span>
           </div>
         </div>
       </div>
@@ -794,6 +815,10 @@ WORKSPACE_HTML = """
     <div class="footer-content">
       <span>Copyright © 2026 Kim Jeongman. All rights reserved.</span>
       <span class="footer-divider">|</span>
+      <button type="button" id="wm-open-terms-btn" class="footer-terms-btn">
+        <span class="terms-btn-icon">📜</span> 사용약관
+      </button>
+      <span class="footer-divider">|</span>
       <a href="https://blog.naver.com/jungman3" target="_blank" rel="noopener noreferrer" class="footer-blog-link">
         <span class="blog-icon">📗</span> Naver Blog
       </a>
@@ -831,8 +856,10 @@ WORKSPACE_CSS = """
   background: #ffffff;
   border: 1.5px solid #bae6fd;
   border-radius: 20px;
-  width: 440px;
+  width: 460px;
   max-width: 90vw;
+  max-height: 88vh;
+  overflow-y: auto;
   padding: 24px 26px;
   box-shadow: 0 20px 45px -10px rgba(14, 165, 233, 0.25), 0 2px 10px rgba(0, 0, 0, 0.05);
   display: flex;
@@ -890,6 +917,12 @@ WORKSPACE_CSS = """
   display: flex;
   gap: 10px;
   align-items: flex-start;
+}
+.terms-rule-item.terms-oss-credit {
+  background: #f1f5f9;
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 9px;
+  margin-top: 2px;
 }
 .rule-icon {
   font-size: 1.05rem;
@@ -981,8 +1014,8 @@ WORKSPACE_CSS = """
   align-items: center;
   gap: 8px;
   min-height: 28px;
-  max-width: calc(100% - 110px);
-  overflow: hidden;
+  flex-shrink: 1;
+  min-width: 0;
 }
 .card-title-group {
   display: flex;
@@ -1245,6 +1278,30 @@ WORKSPACE_CSS = """
 .footer-divider {
   color: #cbd5e1;
 }
+.footer-terms-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #0284c7;
+  font-size: 0.79rem;
+  font-weight: 600;
+  padding: 2.5px 8px;
+  border-radius: 6px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  line-height: 1.2;
+}
+.footer-terms-btn:hover {
+  background: #e0f2fe;
+  color: #0369a1;
+  border-color: #7dd3fc;
+  transform: translateY(-1px);
+}
+.terms-btn-icon {
+  font-size: 0.82rem;
+}
 .footer-blog-link {
   display: inline-flex;
   align-items: center;
@@ -1465,6 +1522,14 @@ function initWorkspace(parentElement) {
     st.termsAgreed = false;
     termsOverlay.style.display = "none";
   });
+
+  // 하단 푸터 사용약관 버튼 클릭: 언제든지 약관 팝업 열람
+  const openTermsBtn = q("#wm-open-terms-btn");
+  if (openTermsBtn) {
+    openTermsBtn.addEventListener("click", () => {
+      termsOverlay.style.display = "flex";
+    });
+  }
 
   // 드래그 앤 드롭 지원 및 빈 영역 클릭 업로드
   const dropArea = editorEmptyEl;
