@@ -4,15 +4,22 @@ on:
   schedule:
     # 매일 한국 시간(KST) 오전 9시에 실행 (UTC 기준 0시 0분)
     - cron: '0 0 * * *'
-  # 언제든 수동으로 직접 실행해 볼 수 있도록 허용하는 옵션
   workflow_dispatch:
 
 jobs:
   wake-up:
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Playwright
-        uses: microsoft/playwright-github-action@v1
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright and Chromium
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium --with-deps
 
       - name: Visit and Wake Up Streamlit App
         run: |
