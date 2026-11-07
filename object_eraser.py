@@ -462,10 +462,26 @@ def run_inpaint_pipeline(orig_b64: str, mask_b64: str):
 
 
 # ==========================================
-# 2-1. 일일 사용량 제한 (클라이언트 IP 및 세션 연동)
+# 2-1. 일일 사용량 제한 (로컬 파일 캐시 + 클라이언트 IP 연동 영구 보존)
 # ==========================================
-# 서버 프로세스 메모리에 저장되는 일일 사용량 캐시: { "IP": {"date": "YYYY-MM-DD", "count": N} }
-_IP_USAGE_CACHE = {}
+import json
+import tempfile
+
+_CACHE_FILE = Path(tempfile.gettempdir()) / "object_eraser_usage_cache.json"
+
+def _load_disk_cache() -> dict:
+    try:
+        if _CACHE_FILE.exists():
+            return json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _save_disk_cache(data: dict):
+    try:
+        _CACHE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 def get_client_ip() -> str:
     """Streamlit 리버스 프록시 헤더 및 WebSocket 클라이언트로부터 실제 IP를 판별합니다."""
@@ -512,44 +528,36 @@ def get_client_ip() -> str:
 
 def check_and_increment_usage(client_ip: str) -> tuple[bool, int, int]:
     """
-    접속자 IP 및 세션 기준으로 오늘 사용량을 검사하고 증가시킵니다.
+    접속자 IP 기준으로 오늘 사용량을 검사하고 증가시킵니다. (디스크 캐시 영구 보존)
     반환: (허용여부: bool, 오늘사용횟수: int, 잔여횟수: int)
     """
     from datetime import date
     today_str = date.today().isoformat()
-    
-    # 1. 서버 전역 IP 캐시 갱신
-    record = _IP_USAGE_CACHE.get(client_ip)
+    cache = _load_disk_cache()
+    record = cache.get(client_ip)
     if not record or record.get("date") != today_str:
         record = {"date": today_str, "count": 0}
-        _IP_USAGE_CACHE[client_ip] = record
+        cache[client_ip] = record
 
-    # 2. 세션 상태에도 독립 카운터 동기화
-    sess_date = st.session_state.get("_sess_usage_date")
-    if sess_date != today_str:
-        st.session_state["_sess_usage_date"] = today_str
-        st.session_state["_sess_usage_count"] = 0
+    if record["count"] >= DAILY_LIMIT:
+        _save_disk_cache(cache)
+        return False, record["count"], 0
 
-    cur_count = max(record["count"], st.session_state.get("_sess_usage_count", 0))
-
-    if cur_count >= DAILY_LIMIT:
-        return False, cur_count, 0
-
-    cur_count += 1
-    record["count"] = cur_count
-    st.session_state["_sess_usage_count"] = cur_count
-    rem = max(0, DAILY_LIMIT - cur_count)
-    return True, cur_count, rem
+    record["count"] += 1
+    cache[client_ip] = record
+    _save_disk_cache(cache)
+    rem = max(0, DAILY_LIMIT - record["count"])
+    return True, record["count"], rem
 
 def get_usage_info(client_ip: str) -> tuple[int, int]:
-    """현재 사용량 및 잔여 횟수를 조회합니다."""
+    """현재 사용량 및 잔여 횟수를 디스크 캐시에서 조회합니다."""
     from datetime import date
     today_str = date.today().isoformat()
-    record = _IP_USAGE_CACHE.get(client_ip)
-    ip_count = record["count"] if (record and record.get("date") == today_str) else 0
-    sess_date = st.session_state.get("_sess_usage_date")
-    sess_count = st.session_state.get("_sess_usage_count", 0) if sess_date == today_str else 0
-    count = max(ip_count, sess_count)
+    cache = _load_disk_cache()
+    record = cache.get(client_ip)
+    if not record or record.get("date") != today_str:
+        return 0, DAILY_LIMIT
+    count = record["count"]
     rem = max(0, DAILY_LIMIT - count)
     return count, rem
 
@@ -1425,7 +1433,8 @@ function initWorkspace(parentElement) {
   }
 
   // 브라우저 localStorage에 저장된 오늘 일일 사용량 복원하여 새로고침 시에도 즉시 표시
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const todayKey = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
   const storedUsageDate = localStorage.getItem("object_eraser_usage_date");
   let localRemaining = __DAILY_LIMIT__;
   if (storedUsageDate === todayKey) {
@@ -1604,7 +1613,9 @@ function initWorkspace(parentElement) {
         const limit = parseInt(match[2], 10);
         const nextRem = Math.max(0, curRem - 1);
         const used = limit - nextRem;
-        localStorage.setItem("object_eraser_usage_date", new Date().toISOString().slice(0, 10));
+        const n = new Date();
+        const tDate = n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0") + "-" + String(n.getDate()).padStart(2, "0");
+        localStorage.setItem("object_eraser_usage_date", tDate);
         localStorage.setItem("object_eraser_usage_count", String(used));
         usageMetricEl.textContent = `오늘 잔여: ${nextRem}/${limit}회`;
       }
@@ -1658,7 +1669,9 @@ function initWorkspace(parentElement) {
         const used = typeof data.usage.used !== "undefined" ? data.usage.used : (__DAILY_LIMIT__ - rem);
         
         // 서버에서 전달받은 최신 사용량을 브라우저 localStorage에 영구 저장 (새로고침 시에도 유지)
-        localStorage.setItem("object_eraser_usage_date", new Date().toISOString().slice(0, 10));
+        const n = new Date();
+        const tDate = n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0") + "-" + String(n.getDate()).padStart(2, "0");
+        localStorage.setItem("object_eraser_usage_date", tDate);
         localStorage.setItem("object_eraser_usage_count", String(used));
 
         // 잔여 한도를 모두 소진(0회)했을 때는 "오늘 잔여: 0/N회" 뱃지를 완전히 숨김
